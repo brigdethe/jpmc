@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parcel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const datasetDefinitions = [
+            {
+                key: "affordability",
+                label: "Affordability",
+                description: "Housing cost, income, and burden indicators.",
+                expectedKeywords: ["afford", "rent", "income", "cost burden", "housing", "transportation", "ami"]
+            },
+            {
+                key: "housing",
+                label: "Housing",
+                description: "Occupancy, tenure, structure, and housing stock.",
+                expectedKeywords: ["occupancy", "vacant", "owner", "renter", "unit", "structure", "tenure", "housing"]
+            },
+            {
+                key: "chas",
+                label: "CHAS",
+                description: "Detailed housing need and affordability by tenure.",
+                expectedKeywords: ["chas", "hud", "cost burden", "owner", "renter", "severe", "housing problems"]
+            },
+            {
+                key: "lowmod",
+                label: "Low/Moderate Income",
+                description: "Low-to-moderate income concentration by geography.",
+                expectedKeywords: ["lmi", "lowmod", "low moderate", "moderate income", "eligibility", "ami"]
+            },
+            {
+                key: "socioeconomics",
+                label: "Socioeconomics",
+                description: "Poverty, labor, commute, and vulnerability indicators.",
+                expectedKeywords: ["poverty", "unemployment", "labor", "commute", "education", "socio", "income"]
+            },
+            {
+                key: "parks",
+                label: "Parks & Amenities",
+                description: "Park and amenity access records.",
+                expectedKeywords: ["park", "amenity", "trail", "playground", "recreation", "facility", "latitude", "longitude"]
+            }
+        ];
+
+        const initialUploads = Object.fromEntries(datasetDefinitions.map((d) => [d.key, null]));
+
+        function normalizeHeader(value) {
+            return String(value || "")
+                .toLowerCase()
+                .replace(/[_\-]+/g, " ")
+                .replace(/[^a-z0-9 ]/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function scoreDatasetFit(fileName, headers, sampleRows, definition) {
+            const normalizedFileName = normalizeHeader(fileName);
+            const normalizedHeaders = headers.map(normalizeHeader);
+            const sampleText = sampleRows
+                .slice(0, 5)
+                .flatMap((row) => Object.values(row || {}))
+                .join(" ")
+                .toLowerCase();
+
+            let score = 0;
+
+            definition.expectedKeywords.forEach((keyword) => {
+                if (normalizedFileName.includes(keyword)) score += 4;
+                if (normalizedHeaders.some((header) => header.includes(keyword))) score += 7;
+                if (sampleText.includes(keyword)) score += 2;
+            });
+
+            if (definition.key === "parks") {
+                const hasLat = normalizedHeaders.some((h) => h.includes("lat"));
+                const hasLon = normalizedHeaders.some((h) => h.includes("lon") || h.includes("lng") || h.includes("longitude"));
+                if (hasLat && hasLon) score += 10;
+            }
+
+            if (definition.key === "affordability") {
+                if (normalizedHeaders.some((h) => h.includes("rent"))) score += 6;
+                if (normalizedHeaders.some((h) => h.includes("income"))) score += 6;
+            }
+
+            if (definition.key === "socioeconomics") {
+                if (normalizedHeaders.some((h) => h.includes("poverty"))) score += 6;
+                if (normalizedHeaders.some((h) => h.includes("unemployment") || h.includes("labor"))) score += 6;
+            }
+
+            return score;
+        }
+
+        function detectDatasetType(fileName, headers, rows) {
+            const scored = datasetDefinitions
+                .map((definition) => ({
+                    ...definition,
+                    score: scoreDatasetFit(fileName, headers, rows, definition)
+                }))
+                .sort((a, b) => b.score - a.score);
+
+            return {
+                bestMatch: scored[0],
+                alternatives: scored.slice(1, 3)
+            };
+        }
+
+        function extractSummary(rows, headers) {
+            const numericColumns = headers.filter((header) =>
+                rows.slice(0, 25).some((row) => !Number.isNaN(Number(row?.[header])) && row?.[header] !== "")
+            );
+
+            return {
+                rowCount: rows.length,
+                columnCount: headers.length,
+                numericColumns: numericColumns.slice(0, 6)
+            };
+        }
+
+        function getStatusTone(confidence) {
+            if (confidence >= 28) {
+                return { label: "High confidence", tone: "text-emerald-300 border-emerald-400/30 bg-emerald-400/10" };
+            }
+            if (confidence >= 16) {
+                return { label: "Medium confidence", tone: "text-amber-300 border-amber-400/30 bg-amber-400/10" };
+            }
+            return { label: "Needs review", tone: "text-rose-300 border-rose-400/30 bg-rose-400/10" };
+        }
+
+        function describeDatasetValue(upload, definition) {
+            if (!upload) return "";
+            const numericSample = (upload.summary.numericColumns || []).slice(0, 3);
+            const fieldSentence = numericSample.length
+                ? `Key numeric fields include ${numericSample.join(", ")}. `
+                : "";
+            const hasGeo = (upload.headers || []).some((header) => /tract|geoid|lat|lon|lng|longitude|latitude/i.test(header));
+            const geoSentence = hasGeo
+                ? "This file can be tied to actual Fort Worth neighborhoods."
+                : "This file may need extra work to connect directly to neighborhood geography.";
+
+            const typeSentence = {
+                affordability: "It helps FWCLT locate neighborhoods where housing costs are too high compared to income.",
+                housing: "It shows housing stock, vacancy, and neighborhood structure so land trust planning can focus on the right buildings.",
+                chas: "It highlights households with severe housing problems and shows where affordable homeownership or rental support is needed.",
+                lowmod: "It points to areas with low- and moderate-income families who most need stable, affordable land and housing.",
+                socioeconomics: "It reveals income, employment, and poverty conditions that influence long-term housing stability.",
+                parks: "It captures access to parks and neighborhood amenities that make affordable housing more valuable and sustainable."
+            }[definition.key] || "It supports decision-making by describing the local conditions that matter most for affordable housing.";
+
+            return `${typeSentence} ${fieldSentence}${geoSentence}`;
+        }
+
+        function summarizeUploadedData(uploads) {
+            const present = Object.entries(uploads).filter(([, upload]) => upload);
+            if (!present.length) {
+                return "Upload a CSV to begin seeing what the data means for FWCLT’s priorities: affordability, equitable access, and community stability in Fort Worth.";
+            }
+            const labels = present
+                .map(([key]) => datasetDefinitions.find((definition) => definition.key === key)?.label)
+                .filter(Boolean);
+            return `The dashboard is now using ${labels.join(", ")} data to show where Fort Worth needs affordable housing, land acquisition, and neighborhood support most.`;
+        }
+
+        function IconCheck() {
+            return <svg className="h-5 w-5 text-emerald-300" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>;
+        }
+
+        function IconAlert() {
+            return <svg className="h-5 w-5 text-slate-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>;
+        }
+
+        function IconUpload() {
+            return <svg className="h-6 w-6 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
+        }
+
+        function IconFile() {
+            return <svg className="h-10 w-10 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
+        }
+
+        function IconBrain() {
+            return <svg className="h-6 w-6 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+        }
+
+        function FWCLTCSVIntakeWebsite() {
+            const [uploads, setUploads] = React.useState(initialUploads);
+            const [activity, setActivity] = React.useState([]);
+
+            const uploadCount = React.useMemo(() => Object.values(uploads).filter(Boolean).length, [uploads]);
+            const uploadedDefinitions = React.useMemo(
+                () => datasetDefinitions.filter((definition) => uploads[definition.key]),
+                [uploads]
+            );
+
+            function handleFiles(fileList) {
+                const files = Array.from(fileList || []).filter((file) => file.name.toLowerCase().endsWith(".csv"));
+
+                files.forEach((file) => {
+                    Papa.parse(file, {
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: (results) => {
+                            const rows = results.data || [];
+                            const headers = results.meta?.fields || [];
+                            const detection = detectDatasetType(file.name, headers, rows);
+                            const summary = extractSummary(rows, headers);
+                            const assignedKey = detection.bestMatch?.key || "affordability";
+
+                            const uploadRecord = {
+                                fileName: file.name,
+                                datasetKey: assignedKey,
+                                datasetLabel: detection.bestMatch?.label || "Unknown",
+                                confidence: detection.bestMatch?.score || 0,
+                                headers,
+                                rows,
+                                summary,
+                                alternatives: detection.alternatives || []
+                            };
+
+                            setUploads((current) => ({
+                                ...current,
+                                [assignedKey]: uploadRecord
+                            }));
+
+                            setActivity((current) => [
+                                {
+                                    fileName: file.name,
+                                    assignedTo: detection.bestMatch?.label || "Unknown",
+                                    confidence: detection.bestMatch?.score || 0,
+                                    time: new Date().toLocaleTimeString()
+                                },
+                                ...current
+                            ].slice(0, 8));
+                        }
+                    });
+                });
+            }
+
+            const pillarCards = [
+                {
+                    title: "Housing Cost Burden",
+                    source: uploads.affordability || uploads.chas,
+                    fallback: "Waiting for affordability or CHAS CSV upload"
+                },
+                {
+                    title: "Displacement Risk",
+                    source: uploads.lowmod || uploads.socioeconomics,
+                    fallback: "Waiting for low/mod or socioeconomic CSV upload"
+                },
+                {
+                    title: "Access to Opportunity",
+                    source: uploads.parks,
+                    fallback: "Waiting for parks or amenity CSV upload"
+                },
+                {
+                    title: "Redevelopment Feasibility",
+                    source: uploads.housing,
+                    fallback: "Waiting for housing CSV upload"
+                },
+                {
+                    title: "Investment Alignment",
+                    source: uploads.affordability || uploads.socioeconomics,
+                    fallback: "Waiting for supporting investment-alignment inputs"
+                }
+            ];
+
+            return (
+                <div className="min-h-screen bg-slate-950 text-slate-50">
+                    <section className="relative overflow-hidden border-b border-white/10">
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_35%),radial-gradient(circle_at_top_right,rgba(16,185,129,0.18),transparent_30%),linear-gradient(to_bottom,rgba(15,23,42,1),rgba(2,6,23,1))]" />
+                        <div className="relative mx-auto max-w-7xl px-6 py-20 lg:px-10 lg:py-24">
+                            <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+                                <div>
+                                    <div className="mb-5 inline-flex rounded-full border border-sky-400/30 bg-sky-400/10 px-4 py-1 text-sm text-sky-200">
+                                        Parcel
+                                    </div>
+                                    <h1 className="max-w-4xl text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl">
+                                        Upload CSV files and let the site intelligently place them in the right analysis area.
+                                    </h1>
+                                    <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-300">
+                                        This version adds an AI-assisted intake layer that reads CSV headers, filenames, and sample values,
+                                        then routes each dataset into the right Fort Worth land trust area for affordability, equity, and neighborhood planning.
+                                    </p>
+                                </div>
+
+                                <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 backdrop-blur-sm">
+                                    <div className="flex items-center gap-3">
+                                        <IconBrain />
+                                        <p className="text-lg font-semibold text-white">Smart CSV Intake</p>
+                                    </div>
+                                    <p className="mt-3 leading-7 text-slate-300">
+                                        The site scores each upload against expected dataset patterns and places it into affordability,
+                                        housing, CHAS, low/mod, socioeconomics, or parks automatically. It is built to help FWCLT understand which Fort Worth neighborhoods and datasets matter most for affordable housing decisions.
+                                    </p>
+                                    <div className="mt-6 grid grid-cols-2 gap-4">
+                                        <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                                            <p className="text-3xl font-semibold text-white">{uploadCount}</p>
+                                            <p className="mt-2 text-sm text-slate-300">datasets currently assigned</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                                            <p className="text-3xl font-semibold text-white">6</p>
+                                            <p className="mt-2 text-sm text-slate-300">target data areas supported</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="mx-auto max-w-7xl px-6 py-14 lg:px-10">
+                        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+                            <div className="rounded-[2rem] border border-emerald-400/20 bg-emerald-400/10 p-7">
+                                <div className="flex items-center gap-3">
+                                    <IconUpload />
+                                    <h2 className="text-2xl font-semibold text-white">Upload CSV files</h2>
+                                </div>
+                                <p className="mt-3 leading-7 text-slate-100">
+                                    Add one or many CSV files. The website reads the file structure, predicts what dataset type it is,
+                                    and sends the data to the correct area automatically.
+                                </p>
+
+                                <label className="mt-6 block cursor-pointer rounded-[1.5rem] border-2 border-dashed border-white/15 bg-slate-950/30 p-8 text-center transition hover:border-emerald-300/40 hover:bg-slate-900/60">
+                                    <input type="file" accept=".csv" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+                                    <IconFile />
+                                    <p className="mt-4 text-lg font-medium text-white">Choose CSV files</p>
+                                    <p className="mt-2 text-sm text-slate-300">Supports multi-file upload and automatic dataset matching</p>
+                                </label>
+                            </div>
+
+                            <div className="rounded-[2rem] border border-white/10 bg-slate-900/70 p-7">
+                                <h2 className="text-2xl font-semibold text-white">How the AI-assisted placement works</h2>
+                                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                                    {[
+                                        "Reads the CSV filename for likely dataset intent.",
+                                        "Analyzes column names and sample rows.",
+                                        "Scores the file against known Fort Worth housing and community patterns.",
+                                        "Assigns the file to the best-fitting land trust decision area.",
+                                        "Shows confidence so users can verify the placement.",
+                                        "Helps FWCLT see which neighborhood data matters first."
+                                    ].map((step) => (
+                                        <div key={step} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-slate-200">
+                                            {step}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="mx-auto max-w-7xl px-6 pb-14 lg:px-10">
+                        <div>
+                            <p className="text-sm uppercase tracking-[0.2em] text-violet-300">Detected Data Placement</p>
+                            <h2 className="mt-2 text-3xl font-semibold text-white">Dataset slots</h2>
+                        </div>
+
+                        <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                            {datasetDefinitions.map((definition) => {
+                                const upload = uploads[definition.key];
+                                const tone = upload ? getStatusTone(upload.confidence) : null;
+
+                                return (
+                                    <div key={definition.key} className="rounded-[1.75rem] border border-white/10 bg-slate-900/80 p-6">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div>
+                                                <h3 className="text-xl font-semibold text-white">{definition.label}</h3>
+                                                <p className="mt-2 text-sm leading-6 text-slate-300">{definition.description}</p>
+                                            </div>
+                                            {upload ? <IconCheck /> : <IconAlert />}
+                                        </div>
+
+                                        {upload ? (
+                                            <div className="mt-5 space-y-4">
+                                                <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${tone.tone}`}>
+                                                    {tone.label}
+                                                </div>
+                                                <div className="rounded-2xl bg-slate-950/50 p-4">
+                                                    <p className="text-sm font-medium text-white">{upload.fileName}</p>
+                                                    <p className="mt-2 text-sm text-slate-300">{upload.summary.rowCount.toLocaleString()} rows · {upload.summary.columnCount} columns</p>
+                                                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">Likely numeric columns</p>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        {upload.summary.numericColumns.length ? (
+                                                            upload.summary.numericColumns.map((column) => (
+                                                                <span key={column} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-200">
+                                                                    {column}
+                                                                </span>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-sm text-slate-400">No strong numeric fields detected yet.</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {!!upload.alternatives?.length && (
+                                                    <div>
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Other possible matches</p>
+                                                        <p className="mt-2 text-sm text-slate-300">{upload.alternatives.map((alt) => alt.label).join(" · ")}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-slate-950/30 p-5 text-sm leading-6 text-slate-400">
+                                                No CSV assigned yet.
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    <section className="mx-auto max-w-7xl px-6 py-14 lg:px-10">
+                        <div className="max-w-3xl">
+                            <p className="text-sm uppercase tracking-[0.2em] text-violet-300">Why these areas matter</p>
+                            <h2 className="mt-2 text-3xl font-semibold text-white">What the data means for FWCLT</h2>
+                            <p className="mt-4 leading-8 text-slate-300">{summarizeUploadedData(uploads)}</p>
+                        </div>
+
+                        <div className="mt-8 grid gap-5 lg:grid-cols-2">
+                            {uploadedDefinitions.length ? (
+                                uploadedDefinitions.map((definition) => {
+                                    const upload = uploads[definition.key];
+                                    return (
+                                        <div key={definition.key} className="rounded-[1.75rem] border border-white/10 bg-slate-950/70 p-6">
+                                            <h3 className="text-xl font-semibold text-white">{definition.label}</h3>
+                                            <p className="mt-3 text-sm leading-6 text-slate-300">{describeDatasetValue(upload, definition)}</p>
+                                            <p className="mt-4 text-sm text-slate-400">{upload.summary.rowCount.toLocaleString()} rows · {upload.summary.columnCount} columns</p>
+                                        </div>
+                                    );
+                                })
+                            ) : (
+                                <div className="rounded-[2rem] border border-dashed border-white/10 bg-slate-950/50 p-8 text-slate-400">
+                                    Upload a CSV to see FWCLT-specific insights about affordability, neighborhood access, and community need.
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+                    <section className="border-y border-white/10 bg-white/[0.03]">
+                        <div className="mx-auto max-w-7xl px-6 py-14 lg:px-10">
+                            <div className="max-w-3xl">
+                                <p className="text-sm uppercase tracking-[0.2em] text-sky-300">Challenge Areas</p>
+                                <h2 className="mt-2 text-3xl font-semibold text-white">Uploaded data flowing into the correct decision pillars</h2>
+                            </div>
+
+                            <div className="mt-8 grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+                                {pillarCards.map((pillar) => (
+                                    <div key={pillar.title} className="rounded-[1.75rem] border border-white/10 bg-slate-950/60 p-6">
+                                        <h3 className="text-xl font-semibold text-white">{pillar.title}</h3>
+                                        {pillar.source ? (
+                                            <div className="mt-4 rounded-2xl bg-emerald-400/10 p-4">
+                                                <p className="text-sm font-medium text-emerald-200">Connected source</p>
+                                                <p className="mt-2 text-white">{pillar.source.fileName}</p>
+                                                <p className="mt-2 text-sm text-slate-300">{pillar.source.summary.rowCount.toLocaleString()} rows routed into this section.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="mt-4 rounded-2xl border border-dashed border-white/10 p-4 text-sm text-slate-400">
+                                                {pillar.fallback}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="mx-auto max-w-7xl px-6 py-14 lg:px-10">
+                        <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+                            <div className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-7">
+                                <h2 className="text-2xl font-semibold text-white">Recent upload activity</h2>
+                                <div className="mt-5 space-y-3">
+                                    {activity.length ? (
+                                        activity.map((item, index) => {
+                                            const tone = getStatusTone(item.confidence);
+                                            return (
+                                                <div key={`${item.fileName}-${index}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                                        <p className="font-medium text-white">{item.fileName}</p>
+                                                        <span className={`rounded-full border px-3 py-1 text-xs ${tone.tone}`}>{item.assignedTo}</span>
+                                                    </div>
+                                                    <p className="mt-2 text-sm text-slate-300">Processed at {item.time}</p>
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <div className="rounded-2xl border border-dashed border-white/10 p-5 text-slate-400">
+                                            Upload activity will appear here after the first CSV is added.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="rounded-[2rem] border border-sky-400/20 bg-sky-400/10 p-7">
+                                <h2 className="text-2xl font-semibold text-white">Best next upgrade</h2>
+                                <p className="mt-4 leading-8 text-slate-100">
+                                    Connect each assigned CSV slot directly to interactive charts, tract ranking tables, and map layers so the entire dashboard updates immediately after file upload.
+                                </p>
+                                <div className="mt-6 space-y-3 text-sm text-slate-100">
+                                    <div className="rounded-2xl bg-slate-950/30 p-4">Map parks CSV to amenity markers automatically.</div>
+                                    <div className="rounded-2xl bg-slate-950/30 p-4">Bind affordability and CHAS CSVs to burden scorecards.</div>
+                                    <div className="rounded-2xl bg-slate-950/30 p-4">Use housing and socioeconomics CSVs to refresh neighborhood rankings.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<FWCLTCSVIntakeWebsite />);
+    </script>
+</body>
+</html>
