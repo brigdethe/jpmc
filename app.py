@@ -19,7 +19,7 @@ from fwclt_scoring.amenities_map import (
     fetch_amenities_overpass,
     summarize_for_scoring,
 )
-from fwclt_scoring.geo import geocode_address, normalize_geoid_for_merge, tract_from_lat_lon
+from fwclt_scoring.geo import geocode_address, normalize_geoid_for_merge, reverse_geocode, tract_from_lat_lon
 from fwclt_scoring.scoring_engine import compute_scores
 from fwclt_scoring.suggest import find_similar_tracts, find_top_tracts, score_all_tracts
 from fwclt_scoring.tract_derive import merged_row_to_parcel_input
@@ -343,7 +343,8 @@ def main() -> None:
 
         if use_coords:
             from fwclt_scoring.geo import GeocodeResult
-            geo = GeocodeResult(address=addr, lat=lat_in, lon=lon_in, display_name=f"{lat_in}, {lon_in}", raw={})
+            display = reverse_geocode(lat_in, lon_in) or f"{lat_in}, {lon_in}"
+            geo = GeocodeResult(address=addr, lat=lat_in, lon=lon_in, display_name=display, raw={})
         else:
             with st.spinner("Finding the address on the map..."):
                 geo = geocode_address(addr)

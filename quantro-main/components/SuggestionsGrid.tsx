@@ -61,6 +61,15 @@ export const SuggestionsGrid: React.FC<SuggestionsGridProps> = ({ onSelectTract 
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-5 text-xs text-amber-800">
+        <svg className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+        </svg>
+        <span>
+          These scores are <strong>estimates</strong> based on census tract data only — nearby amenities are not included.
+          <br />Scores may differ when you score a specific property directly.
+        </span>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {suggestions.map((tract, i) => (
           <SuggestionCard

@@ -3,7 +3,7 @@ import { Header } from './components/Header';
 import { Controls } from './components/Controls';
 import { DashboardCharts } from './components/DashboardCharts';
 import { ScoreInput } from './components/ScoreInput';
-import { ScoreResult } from './components/ScoreResult';
+import { KPIHeader } from './components/KPIHeader';
 import { FactorBreakdown } from './components/FactorBreakdown';
 import { FactorTable } from './components/FactorTable';
 import { AmenityTable } from './components/AmenityTable';
@@ -11,6 +11,8 @@ import { AmenityMap } from './components/AmenityMap';
 import { SuggestionsGrid } from './components/SuggestionsGrid';
 import { AIChatPanel } from './components/AIChatPanel';
 import { fetchAISearch, fetchScore } from './lib/api';
+import { getCached, setCached, removeCached } from './lib/cache';
+import { ComparePanel } from './components/ComparePanel';
 import { TabOption } from './types';
 import type { AISearchResult, ScoreRequest, ScoreResponse, SuggestionTract } from './types';
 
@@ -85,13 +87,54 @@ export default function App() {
   const [aiWarnings, setAiWarnings] = useState<string[]>([]);
   const [aiProvider, setAiProvider] = useState('');
   const [chartsOpen, setChartsOpen] = useState(false);
+  const [amenityMapOpen, setAmenityMapOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  const [lastReq, setLastReq] = useState<ScoreRequest | null>(null);
 
   useEffect(() => {
-    if (activeTab !== TabOption.ScoreProperty) setChartsOpen(false);
+    if (activeTab !== TabOption.ScoreProperty) {
+      setChartsOpen(false);
+      setAmenityMapOpen(false);
+      setCompareOpen(false);
+    }
   }, [activeTab]);
 
+  useEffect(() => {
+    if (!scoreData?.lat || !scoreData?.lon) setAmenityMapOpen(false);
+  }, [scoreData]);
+
+  const handleChartsOpenChange = useCallback((open: boolean) => {
+    setAmenityMapOpen(false);
+    setCompareOpen(false);
+    setChartsOpen(open);
+  }, []);
+
+  const toggleAmenityMap = useCallback(() => {
+    if (scoreData?.lat == null || scoreData?.lon == null) return;
+    setChartsOpen(false);
+    setCompareOpen(false);
+    setAmenityMapOpen((o) => !o);
+  }, [scoreData]);
+
+  const toggleCompare = useCallback(() => {
+    setChartsOpen(false);
+    setAmenityMapOpen(false);
+    setCompareOpen((o: boolean) => !o);
+  }, []);
+
   const handleScore = useCallback(async (req: ScoreRequest) => {
+    setLastReq(req);
+    setAutoAddress(''); // clear so stale coordinates don't re-submit on next score
+    const cached = getCached(req);
+    if (cached) {
+      setScoreData(cached);
+      setFromCache(true);
+      setError('');
+      return;
+    }
     setLoading(true);
+    setFromCache(false);
     setError('');
     setScoreData(null);
     try {
@@ -100,6 +143,7 @@ export default function App() {
         setError(data.error);
       } else {
         setScoreData(data);
+        setCached(req, data);
       }
     } catch (err: any) {
       setError(err.message || 'Scoring failed');
@@ -107,6 +151,36 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  const handleNewSearch = useCallback(() => {
+    setScoreData(null);
+    setFromCache(false);
+    setLastReq(null);
+    setError('');
+    setAutoAddress('');
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    if (!lastReq) return;
+    removeCached(lastReq);
+    setFromCache(false);
+    setLoading(true);
+    setError('');
+    setScoreData(null);
+    try {
+      const data = await fetchScore(lastReq);
+      if (data.error) {
+        setError(data.error);
+      } else {
+        setScoreData(data);
+        setCached(lastReq, data);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Scoring failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [lastReq]);
 
   const handleAISearch = useCallback(async (query: string) => {
     setAiLoading(true);
@@ -131,9 +205,19 @@ export default function App() {
   }, []);
 
   const handleSelectTract = useCallback((tract: SuggestionTract) => {
-    setAutoAddress(`${tract.approx_lat}, ${tract.approx_lon}`);
+    const address = `${tract.approx_lat}, ${tract.approx_lon}`;
     setActiveTab(TabOption.ScoreProperty);
-  }, []);
+    handleScore({
+      address,
+      parcel_type: 'vacant',
+      flood_zone: 'none',
+      brownfield: false,
+      channel_city: false,
+      channel_fannie: false,
+      channel_institution: false,
+      radius_m: 8000,
+    });
+  }, [handleScore]);
 
   const handleSelectAIResult = useCallback((tract: AISearchResult) => {
     const address = `${tract.approx_lat}, ${tract.approx_lon}`;
@@ -155,6 +239,11 @@ export default function App() {
     setAutoAddress(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
   }, []);
 
+  const amenityMapCoords =
+    scoreData?.lat != null && scoreData?.lon != null
+      ? ([scoreData.lat, scoreData.lon] as [number, number])
+      : null;
+
   return (
     <div className="min-h-screen bg-bgPrimary pb-12 font-sans selection:bg-green-200">
       <div className="max-w-[1280px] mx-auto pt-6 px-4 sm:px-8">
@@ -170,25 +259,88 @@ export default function App() {
               }
               showIconToolbar={activeTab === TabOption.ScoreProperty}
               chartsOpen={chartsOpen}
-              onChartsOpenChange={setChartsOpen}
+              onChartsOpenChange={handleChartsOpenChange}
+              amenityMapOpen={amenityMapOpen}
+              amenityMapEnabled={Boolean(amenityMapCoords)}
+              onToggleAmenityMap={toggleAmenityMap}
+              compareOpen={compareOpen}
+              compareEnabled={Boolean(scoreData)}
+              onToggleCompare={toggleCompare}
             />
 
-            {activeTab === TabOption.ScoreProperty && chartsOpen && <DashboardCharts />}
+            {activeTab === TabOption.ScoreProperty && chartsOpen && <DashboardCharts scoreData={scoreData} />}
 
-            {activeTab === TabOption.ScoreProperty && !chartsOpen && (
-              <>
-                <ScoreInput
-                  onScore={handleScore}
-                  onAISearch={handleAISearch}
-                  onSelectAIResult={handleSelectAIResult}
-                  loading={loading}
-                  aiLoading={aiLoading}
-                  aiResults={aiResults}
-                  aiWarnings={aiWarnings}
-                  aiProvider={aiProvider}
-                  aiError={aiError}
-                  initialAddress={autoAddress}
+            {activeTab === TabOption.ScoreProperty && compareOpen && scoreData && (
+              <ComparePanel current={scoreData} onClose={() => setCompareOpen(false)} />
+            )}
+
+            {activeTab === TabOption.ScoreProperty &&
+              !chartsOpen &&
+              amenityMapOpen &&
+              amenityMapCoords &&
+              scoreData && (
+                <AmenityMap
+                  spread
+                  center={amenityMapCoords}
+                  amenities={scoreData.amenities}
+                  onMapClick={handleMapClick}
+                  address={scoreData.address}
                 />
+              )}
+
+            {activeTab === TabOption.ScoreProperty && !chartsOpen && !amenityMapOpen && !compareOpen && (
+              <>
+                {!scoreData ? (
+                  <ScoreInput
+                    onScore={handleScore}
+                    onAISearch={handleAISearch}
+                    onSelectAIResult={handleSelectAIResult}
+                    loading={loading}
+                    aiLoading={aiLoading}
+                    aiResults={aiResults}
+                    aiWarnings={aiWarnings}
+                    aiProvider={aiProvider}
+                    aiError={aiError}
+                    initialAddress={autoAddress}
+                  />
+                ) : (
+                  <div className="flex items-center justify-between bg-white rounded-2xl shadow-soft px-5 py-4 mb-6">
+                    <div className="min-w-0">
+                      <p className="text-base font-semibold text-gray-900 truncate">{scoreData.address}</p>
+                      <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        <span className="text-xs text-gray-400 font-mono">
+                          {scoreData.lat?.toFixed(6)}, {scoreData.lon?.toFixed(6)}
+                        </span>
+                        {scoreData.lat != null && scoreData.lon != null && (
+                          <a
+                            href={`https://www.google.com/maps?q=${scoreData.lat},${scoreData.lon}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                            Google Maps
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleNewSearch}
+                      className="ml-4 shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      </svg>
+                      New Search
+                    </button>
+                  </div>
+                )}
 
                 {error && (
                   <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-700">
@@ -198,7 +350,7 @@ export default function App() {
 
                 {scoreData && (
                   <>
-                    <ScoreResult data={scoreData} />
+                    <KPIHeader data={scoreData} fromCache={fromCache} onRefresh={handleRefresh} />
                     <AIChatPanel
                       key={`${scoreData.tract_geoid}-${scoreData.composite_score}`}
                       property={scoreData}
@@ -206,13 +358,6 @@ export default function App() {
                     <FactorBreakdown factors={scoreData.factors} />
                     <FactorTable factors={scoreData.factors} />
                     <AmenityTable summary={scoreData.amenity_summary} />
-                    {scoreData.lat && scoreData.lon && (
-                      <AmenityMap
-                        center={[scoreData.lat, scoreData.lon]}
-                        amenities={scoreData.amenities}
-                        onMapClick={handleMapClick}
-                      />
-                    )}
                   </>
                 )}
 
@@ -224,7 +369,7 @@ export default function App() {
                     </svg>
                     <p className="text-sm font-medium mb-1">Enter a Fort Worth address to score</p>
                     <p className="text-xs text-gray-300">
-                      Or click on the map after scoring to explore nearby properties
+                      Or switch to map view after scoring to explore nearby properties
                     </p>
                   </div>
                 )}

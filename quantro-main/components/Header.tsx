@@ -64,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
           </div>
           <div className="hidden sm:flex flex-col text-xs">
-            <span className="font-semibold text-gray-900">Tuki Joshua</span>
+            <span className="font-semibold text-gray-900">Elizabeth M.</span>
             <span className="text-gray-400">Manager</span>
           </div>
           <button type="button" className="p-1 hover:bg-gray-100 rounded-md transition-colors">

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(head -50)",
+      "Bash(PowerShell -Command \"Get-Content 'c:\\\\Users\\\\owusu\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-owusu-Documents-jpmc\\\\9f114ba6-0ca2-42d9-af35-ccdd5dd89b5b\\\\tasks\\\\bejgv2w53.output' -ErrorAction SilentlyContinue\")",
+      "Bash(grep -E \"src/|\\\\.tsx$|\\\\.jsx$\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

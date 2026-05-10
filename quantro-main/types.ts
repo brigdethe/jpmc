@@ -50,6 +50,7 @@ export interface SuggestionTract {
   weaknesses: string;
   approx_lat: number;
   approx_lon: number;
+  neighborhood_name?: string;
 }
 
 export interface AISearchResult extends SuggestionTract {

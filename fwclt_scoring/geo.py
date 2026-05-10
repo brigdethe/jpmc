@@ -31,6 +31,22 @@ class TractLookupResult:
     raw: dict[str, Any]
 
 
+def reverse_geocode(lat: float, lon: float, *, user_agent: str = "fwclt-property-scorer/1.0") -> str | None:
+    """Reverse geocode lat/lon → human-readable address string. Returns None on failure."""
+    try:
+        geolocator = Nominatim(user_agent=user_agent, timeout=10)
+        loc: Location | None = geolocator.reverse((lat, lon), language="en")
+        if loc is None:
+            return None
+        addr = str(loc.address)
+        # Strip trailing ", United States" — redundant for a US-only app
+        if addr.endswith(", United States"):
+            addr = addr[: -len(", United States")]
+        return addr
+    except Exception:
+        return None
+
+
 def geocode_address(address: str, *, user_agent: str = "fwclt-property-scorer/1.0") -> GeocodeResult | None:
     """Forward geocode with Nominatim (OpenStreetMap). Rate-limit friendly: one call per user action."""
     q = address.strip()

@@ -22,6 +22,62 @@ from fwclt_scoring.scoring_engine import FACTORS, compute_scores
 from fwclt_scoring.tract_derive import merged_row_to_parcel_input
 
 
+_centroid_cache: dict[str, tuple[float, float, str]] = {}  # geoid -> (lat, lon, display_name)
+
+
+def _tigerweb_lookup(geoid: str) -> tuple[float, float, str] | None:
+    """Fetch real centroid + official name from the Census TIGERweb REST API."""
+    url = (
+        "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_ACS2023/MapServer/8/query?"
+        + urlencode({
+            "where": f"GEOID='{geoid}'",
+            "outFields": "GEOID,INTPTLAT,INTPTLON,NAME",
+            "f": "json",
+            "returnGeometry": "false",
+        })
+    )
+    req = Request(url, headers={"User-Agent": "fwclt-property-scorer/1.0"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        features = data.get("features", [])
+        if features:
+            attrs = features[0].get("attributes", {})
+            lat = float(attrs["INTPTLAT"])
+            lon = float(attrs["INTPTLON"])
+            name = str(attrs.get("NAME") or "")
+            return lat, lon, name
+    except Exception:
+        return None
+
+
+def _format_tract_name(geoid: str) -> str:
+    """Format GEOID → 'Census Tract 1102.05' with no API calls."""
+    g = str(geoid).zfill(11)
+    tract_raw = g[5:]
+    tract_main = int(tract_raw[:4])
+    tract_suf = tract_raw[4:]
+    return f"Census Tract {tract_main}.{tract_suf}"
+
+
+def get_location_info(geoid: str) -> tuple[float, float, str]:
+    """Return (lat, lon, display_name) for a census tract. Result is cached per process."""
+    if geoid in _centroid_cache:
+        return _centroid_cache[geoid]
+
+    result = _tigerweb_lookup(geoid)
+    if result:
+        lat, lon, tigername = result
+        tract_label = tigername if tigername else _format_tract_name(geoid)
+        display = f"{tract_label}, Tarrant County, TX"
+    else:
+        lat, lon = _approx_centroid_from_geoid(geoid)
+        display = f"{_format_tract_name(geoid)}, Fort Worth, TX"
+
+    _centroid_cache[geoid] = (lat, lon, display)
+    return lat, lon, display
+
+
 _EMPTY_AMENITY_SUMMARY: dict[str, Any] = {
     "nearest_grocery_distance_miles": None,
     "nearest_pharmacy_distance_miles": None,

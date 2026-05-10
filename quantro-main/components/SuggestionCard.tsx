@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { MapPin, DollarSign, TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
+import { MapPin, TrendingUp, TrendingDown } from 'lucide-react';
 import type { SuggestionTract } from '../types';
 
 interface SuggestionCardProps {
@@ -10,14 +10,16 @@ interface SuggestionCardProps {
 }
 
 function scoreBand(score: number) {
-  if (score >= 75) return { bg: 'bg-green-50 ring-green-200', text: 'text-green-700', dot: 'bg-green-500' };
-  if (score >= 50) return { bg: 'bg-yellow-50 ring-yellow-200', text: 'text-yellow-700', dot: 'bg-yellow-500' };
-  return { bg: 'bg-red-50 ring-red-200', text: 'text-red-700', dot: 'bg-red-500' };
+  if (score >= 75) return { ring: 'ring-green-100', scoreText: 'text-green-600', dot: 'bg-green-500', gradeBg: 'bg-green-100 text-green-700' };
+  if (score >= 50) return { ring: 'ring-amber-100', scoreText: 'text-amber-600', dot: 'bg-amber-500', gradeBg: 'bg-amber-100 text-amber-700' };
+  return { ring: 'ring-red-100', scoreText: 'text-red-500', dot: 'bg-red-500', gradeBg: 'bg-red-100 text-red-600' };
 }
 
 function fmt(v: number | null, prefix = '$'): string {
   if (v == null) return 'N/A';
-  return `${prefix}${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  if (v >= 1_000_000) return `${prefix}${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${prefix}${Math.round(v / 1_000)}k`;
+  return `${prefix}${v}`;
 }
 
 export const SuggestionCard: React.FC<SuggestionCardProps> = ({ tract, index, onSelect }) => {
@@ -31,84 +33,84 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({ tract, index, on
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06 }}
       onClick={() => onSelect(tract)}
-      className={`relative ${band.bg} ring-1 rounded-2xl p-5 cursor-pointer hover:shadow-md transition-all group`}
+      className={`bg-white ring-1 ${band.ring} rounded-2xl p-5 cursor-pointer hover:shadow-md transition-all flex flex-col gap-4`}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className={`w-3 h-3 rounded-full ${band.dot}`} />
-          <span className={`text-2xl font-bold ${band.text}`}>
+      {/* Score row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-baseline gap-1.5">
+          <span className={`text-4xl font-bold tracking-tight ${band.scoreText}`}>
             {Math.round(tract.composite_score)}
           </span>
-          <span className={`text-xs font-bold ${band.text}`}>/ 100</span>
+          <span className="text-sm text-gray-300 font-medium">/ 100</span>
         </div>
-        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${band.text} ${band.bg}`}>
-          {tract.letter_grade}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-3">
-        <MapPin className="w-3 h-3" />
-        <span className="truncate">Tract {tract.GEOID}</span>
-        {tract.approx_lat && (
-          <span className="text-gray-300 ml-1">
-            ({tract.approx_lat.toFixed(3)}, {tract.approx_lon.toFixed(3)})
+        <div className="flex items-center gap-2">
+          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg ${band.gradeBg}`}>
+            Grade {tract.letter_grade}
           </span>
-        )}
+          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-lg ${tract.pass_fail === 'PASS' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+            {tract.pass_fail}
+          </span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-        <div className="flex items-center gap-1.5 text-gray-600">
-          <DollarSign className="w-3 h-3 text-gray-400" />
-          <span>Home: {fmt(tract.median_home_value)}</span>
+      {/* Location */}
+      <div className="flex items-start gap-1.5 text-xs text-gray-500">
+        <MapPin className="w-3 h-3 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          {tract.neighborhood_name ? (
+            <span className="leading-snug">{tract.neighborhood_name}</span>
+          ) : (
+            <span>Tract {tract.GEOID}</span>
+          )}
+          {tract.approx_lat != null && (
+            <span className="block text-[10px] text-gray-300 mt-0.5 font-mono">
+              {tract.approx_lat.toFixed(5)}, {tract.approx_lon.toFixed(5)}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-1.5 text-gray-600">
-          <DollarSign className="w-3 h-3 text-gray-400" />
-          <span>Land: {fmt(tract.est_land_value)}</span>
-        </div>
+      </div>
+
+      {/* Key metrics */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500">
+        <span>Home <span className="font-medium text-gray-700">{fmt(tract.median_home_value)}</span></span>
+        <span>Land <span className="font-medium text-gray-700">{fmt(tract.est_land_value)}</span></span>
         {tract.median_income != null && (
-          <div className="text-gray-500 col-span-2">
-            Income: {fmt(tract.median_income)} &middot; Poverty: {tract.poverty_pct?.toFixed(1) ?? 'N/A'}%
-          </div>
+          <>
+            <span>Income <span className="font-medium text-gray-700">{fmt(tract.median_income)}</span></span>
+            <span>Poverty <span className="font-medium text-gray-700">{tract.poverty_pct?.toFixed(1) ?? 'N/A'}%</span></span>
+          </>
         )}
       </div>
 
-      {strengths.length > 0 && (
-        <div className="mb-2">
-          <div className="flex items-center gap-1 text-[10px] font-bold text-green-600 uppercase mb-1">
-            <TrendingUp className="w-3 h-3" /> Strengths
-          </div>
-          {strengths.map((s, i) => (
-            <p key={i} className="text-[11px] text-gray-600 leading-snug truncate">{s}</p>
+      {/* Strengths & weaknesses */}
+      {(strengths.length > 0 || weaknesses_list.length > 0) && (
+        <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+          {strengths.slice(0, 2).map((s, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <TrendingUp className="w-3 h-3 text-green-500 mt-0.5 shrink-0" />
+              <span className="text-[11px] text-gray-600 leading-snug truncate">{s}</span>
+            </div>
+          ))}
+          {weaknesses_list.slice(0, 1).map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <TrendingDown className="w-3 h-3 text-red-400 mt-0.5 shrink-0" />
+              <span className="text-[11px] text-gray-400 leading-snug truncate">{w}</span>
+            </div>
           ))}
         </div>
       )}
 
-      {weaknesses_list.length > 0 && (
-        <div>
-          <div className="flex items-center gap-1 text-[10px] font-bold text-red-500 uppercase mb-1">
-            <TrendingDown className="w-3 h-3" /> Needs Improvement
-          </div>
-          {weaknesses_list.map((w, i) => (
-            <p key={i} className="text-[11px] text-gray-500 leading-snug truncate">{w}</p>
-          ))}
+      {/* Designation badges */}
+      {(tract.is_qct === 1 || tract.is_oz === 1) && (
+        <div className="flex gap-1.5">
+          {tract.is_qct === 1 && (
+            <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-bold rounded-md">QCT</span>
+          )}
+          {tract.is_oz === 1 && (
+            <span className="px-2 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-bold rounded-md">OZ</span>
+          )}
         </div>
       )}
-
-      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-        <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
-      </div>
-
-      <div className="flex flex-wrap gap-1.5 mt-3">
-        {tract.is_qct === 1 && (
-          <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded">QCT</span>
-        )}
-        {tract.is_oz === 1 && (
-          <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[9px] font-bold rounded">OZ</span>
-        )}
-        <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${tract.pass_fail === 'PASS' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-          {tract.pass_fail}
-        </span>
-      </div>
     </motion.div>
   );
 };

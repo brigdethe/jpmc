@@ -18,9 +18,9 @@ from fwclt_ai.prompts import CHAT_SYSTEM, build_chat_prompt
 from fwclt_ai.providers import AIProviderError, generate_text
 from fwclt_ai.recommend import recommend_tracts
 from fwclt_scoring.amenities_map import attach_osrm_distances, fetch_amenities_overpass, summarize_for_scoring
-from fwclt_scoring.geo import GeocodeResult, geocode_address, normalize_geoid_for_merge, tract_from_lat_lon
+from fwclt_scoring.geo import GeocodeResult, geocode_address, normalize_geoid_for_merge, reverse_geocode, tract_from_lat_lon
 from fwclt_scoring.scoring_engine import compute_scores
-from fwclt_scoring.suggest import find_similar_tracts, find_top_tracts, score_all_tracts
+from fwclt_scoring.suggest import find_similar_tracts, find_top_tracts, get_location_info, score_all_tracts
 from fwclt_scoring.tract_derive import merged_row_to_parcel_input
 
 ROOT = Path(__file__).resolve().parent
@@ -86,6 +86,18 @@ def _clean_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: _safe(v) for k, v in row.items()} for row in records]
 
 
+def _enrich_tracts(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach real centroid coordinates and a human-readable location name to tract records."""
+    for rec in records:
+        geoid = rec.get("GEOID", "")
+        if geoid:
+            lat, lon, name = get_location_info(geoid)
+            rec["approx_lat"] = lat
+            rec["approx_lon"] = lon
+            rec["neighborhood_name"] = name
+    return records
+
+
 class ScoreRequest(BaseModel):
     address: str
     parcel_type: str = "vacant"
@@ -130,7 +142,8 @@ def score_property(req: ScoreRequest):
                 pass
 
     if use_coords:
-        geo = GeocodeResult(address=addr, lat=lat_in, lon=lon_in, display_name=f"{lat_in}, {lon_in}", raw={})
+        display = reverse_geocode(lat_in, lon_in) or f"{lat_in}, {lon_in}"
+        geo = GeocodeResult(address=addr, lat=lat_in, lon=lon_in, display_name=display, raw={})
     else:
         geo = geocode_address(addr)
         if geo is None:
@@ -198,7 +211,7 @@ def score_property(req: ScoreRequest):
 
     scored_df = _load_scored()
     similar = find_similar_tracts(scored_df, geoid, scorecard.composite_0_100, score_range=12.0, max_results=6)
-    similar_json = _clean_records(similar.to_dict("records"))
+    similar_json = _enrich_tracts(_clean_records(similar.to_dict("records")))
 
     tract_data = None
     if merged_row:
@@ -230,7 +243,7 @@ def score_property(req: ScoreRequest):
 def get_suggestions(top: int = Query(12, ge=1, le=50)):
     scored = _load_scored()
     result = find_top_tracts(scored, min_score=60.0, max_results=top)
-    return _clean_records(result.to_dict("records"))
+    return _enrich_tracts(_clean_records(result.to_dict("records")))
 
 
 @app.get("/api/tract/{geoid}")
