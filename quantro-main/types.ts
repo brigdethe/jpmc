@@ -52,6 +52,40 @@ export interface SuggestionTract {
   approx_lon: number;
 }
 
+export interface AISearchResult extends SuggestionTract {
+  match_score: number;
+  match_reasons: string[];
+  matched_preferences: string[];
+  walk_score?: number | null;
+  transit_score?: number | null;
+  bike_score?: number | null;
+  crime_incidents?: number | null;
+  parks_count?: number | null;
+  vacant_lot_pct?: number | null;
+  flood_zone_pct?: number | null;
+}
+
+export interface AISearchResponse {
+  query: string;
+  provider: string;
+  intent: Record<string, any>;
+  results: AISearchResult[];
+  warnings: string[];
+  error?: string;
+}
+
+export interface AIChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AIChatResponse {
+  answer: string;
+  provider: string;
+  warnings: string[];
+  error?: string;
+}
+
 export interface ScoreResponse {
   composite_score: number;
   letter_grade: string;

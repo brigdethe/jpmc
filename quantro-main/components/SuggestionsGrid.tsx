@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { fetchSuggestions } from '../lib/api';
 import { SuggestionCard } from './SuggestionCard';
 import type { SuggestionTract } from '../types';
@@ -61,15 +61,6 @@ export const SuggestionsGrid: React.FC<SuggestionsGridProps> = ({ onSelectTract 
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <div className="flex items-center gap-2 mb-6">
-        <Sparkles className="w-5 h-5 text-yellow-500" />
-        <h2 className="text-lg font-semibold text-gray-800">Top Scoring Areas</h2>
-        <span className="text-xs text-gray-400 ml-2">{suggestions.length} areas found</span>
-      </div>
-      <p className="text-sm text-gray-500 mb-6">
-        These areas scored highest based on tract-level data across all 13 acquisition factors. 
-        Click any card to score the full property with live amenity data.
-      </p>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {suggestions.map((tract, i) => (
           <SuggestionCard

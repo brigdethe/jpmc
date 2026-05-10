@@ -23,7 +23,10 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+.fwclt_ai_cache/
+
 # Build output
 dist/
 build/
+.vite/
 .ipynb_checkpoints/

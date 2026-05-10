@@ -25,8 +25,9 @@ from fwclt_scoring.suggest import find_similar_tracts, find_top_tracts, score_al
 from fwclt_scoring.tract_derive import merged_row_to_parcel_input
 
 ROOT = Path(__file__).resolve().parent
-FULL_PIPELINE_CSV = ROOT / "fort_worth_full_pipeline.csv"
-MERGED_CSV = ROOT / "fort_worth_merged.csv"
+DATA_DIR = ROOT / "data"
+FULL_PIPELINE_CSV = DATA_DIR / "fort_worth_full_pipeline.csv"
+MERGED_CSV = DATA_DIR / "fort_worth_merged.csv"
 
 FWCLT_FACTOR_NAMES = {
     1: "Neighborhood & Special Designations",

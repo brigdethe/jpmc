@@ -15,6 +15,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/1eye-WRXT5JyHei2g9rzVCe
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Set AI keys in the repo-root `.env`; the React app calls the FastAPI backend and does not expose API keys in the browser
 3. Run the app:
    `npm run dev`

@@ -7,8 +7,16 @@ from typing import Any
 import pandas as pd
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional until requirements are installed
+    load_dotenv = None
+
+from fwclt_ai.prompts import CHAT_SYSTEM, build_chat_prompt
+from fwclt_ai.providers import AIProviderError, generate_text
+from fwclt_ai.recommend import recommend_tracts
 from fwclt_scoring.amenities_map import attach_osrm_distances, fetch_amenities_overpass, summarize_for_scoring
 from fwclt_scoring.geo import GeocodeResult, geocode_address, normalize_geoid_for_merge, tract_from_lat_lon
 from fwclt_scoring.scoring_engine import compute_scores
@@ -16,8 +24,11 @@ from fwclt_scoring.suggest import find_similar_tracts, find_top_tracts, score_al
 from fwclt_scoring.tract_derive import merged_row_to_parcel_input
 
 ROOT = Path(__file__).resolve().parent
-FULL_PIPELINE_CSV = ROOT / "fort_worth_full_pipeline.csv"
-MERGED_CSV = ROOT / "fort_worth_merged.csv"
+if load_dotenv is not None:
+    load_dotenv(ROOT / ".env")
+DATA_DIR = ROOT / "data"
+FULL_PIPELINE_CSV = DATA_DIR / "fort_worth_full_pipeline.csv"
+MERGED_CSV = DATA_DIR / "fort_worth_merged.csv"
 
 FWCLT_FACTOR_NAMES = {
     1: "Neighborhood & Special Designations",
@@ -63,6 +74,11 @@ def _safe(v: Any) -> Any:
         return None
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
+    if hasattr(v, "item"):
+        try:
+            return _safe(v.item())
+        except ValueError:
+            pass
     return v
 
 
@@ -79,6 +95,22 @@ class ScoreRequest(BaseModel):
     channel_fannie: bool = False
     channel_institution: bool = False
     radius_m: int = 8000
+
+
+class AISearchRequest(BaseModel):
+    query: str
+    top: int = 8
+
+
+class AIChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AIChatRequest(BaseModel):
+    question: str
+    property: dict[str, Any]
+    history: list[AIChatMessage] = Field(default_factory=list)
 
 
 @app.post("/api/score")
@@ -210,3 +242,62 @@ def get_tract(geoid: str):
         return {"error": f"GEOID {normalized} not found"}
     row = rows.iloc[0].to_dict()
     return {k: _safe(v) for k, v in row.items()}
+
+
+@app.post("/api/ai/search")
+def ai_search(req: AISearchRequest):
+    query = req.query.strip()
+    if not query:
+        return {"error": "Enter a natural-language search request."}
+
+    result = recommend_tracts(
+        query=query,
+        scored_df=_load_scored(),
+        source_df=_load_df(),
+        top=req.top,
+    )
+    result["results"] = _clean_records(result["results"])
+    return result
+
+
+@app.post("/api/ai/chat")
+def ai_chat(req: AIChatRequest):
+    question = req.question.strip()
+    if not question:
+        return {"error": "Enter a question about the scored property."}
+
+    history = [{"role": m.role, "content": m.content} for m in req.history if m.content.strip()]
+    try:
+        answer, provider = generate_text(
+            system=CHAT_SYSTEM,
+            prompt=build_chat_prompt(question, req.property, history),
+            temperature=0.2,
+            max_tokens=900,
+        )
+        return {"answer": answer, "provider": provider, "warnings": []}
+    except AIProviderError as exc:
+        return {
+            "answer": _local_chat_fallback(question, req.property),
+            "provider": "local",
+            "warnings": [f"AI chat unavailable; used local summary. {exc}"],
+        }
+
+
+def _local_chat_fallback(question: str, prop: dict[str, Any]) -> str:
+    score = prop.get("composite_score")
+    grade = prop.get("letter_grade")
+    address = prop.get("address") or "this property"
+    factors = prop.get("factors") or []
+    strongest = sorted(factors, key=lambda f: f.get("contribution", 0), reverse=True)[:3]
+    weakest = sorted(factors, key=lambda f: f.get("contribution", 0))[:3]
+
+    lines = [
+        f"For {address}, the computed score is {score:.1f}/100 with grade {grade}." if isinstance(score, (int, float)) else f"For {address}, I can only use the supplied score context.",
+        "AI provider access is not configured right now, so this is a local summary rather than a full chat response.",
+    ]
+    if strongest:
+        lines.append("Top strengths: " + "; ".join(f"{f.get('name')} ({f.get('tier')})" for f in strongest))
+    if weakest:
+        lines.append("Main risks or weaker factors: " + "; ".join(f"{f.get('name')} ({f.get('tier')})" for f in weakest))
+    lines.append("Next due diligence should confirm parcel availability, exact site conditions, title/zoning constraints, floodplain status, and current neighborhood context.")
+    return "\n\n".join(lines)

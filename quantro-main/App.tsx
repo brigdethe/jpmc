@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Controls } from './components/Controls';
+import { DashboardCharts } from './components/DashboardCharts';
 import { ScoreInput } from './components/ScoreInput';
 import { ScoreResult } from './components/ScoreResult';
 import { FactorBreakdown } from './components/FactorBreakdown';
@@ -8,9 +9,10 @@ import { FactorTable } from './components/FactorTable';
 import { AmenityTable } from './components/AmenityTable';
 import { AmenityMap } from './components/AmenityMap';
 import { SuggestionsGrid } from './components/SuggestionsGrid';
-import { fetchScore } from './lib/api';
+import { AIChatPanel } from './components/AIChatPanel';
+import { fetchAISearch, fetchScore } from './lib/api';
 import { TabOption } from './types';
-import type { ScoreRequest, ScoreResponse, SuggestionTract } from './types';
+import type { AISearchResult, ScoreRequest, ScoreResponse, SuggestionTract } from './types';
 
 function AboutTab() {
   return (
@@ -77,6 +79,16 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [autoAddress, setAutoAddress] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiResults, setAiResults] = useState<AISearchResult[]>([]);
+  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
+  const [aiProvider, setAiProvider] = useState('');
+  const [chartsOpen, setChartsOpen] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== TabOption.ScoreProperty) setChartsOpen(false);
+  }, [activeTab]);
 
   const handleScore = useCallback(async (req: ScoreRequest) => {
     setLoading(true);
@@ -96,10 +108,48 @@ export default function App() {
     }
   }, []);
 
+  const handleAISearch = useCallback(async (query: string) => {
+    setAiLoading(true);
+    setAiError('');
+    setAiWarnings([]);
+    try {
+      const data = await fetchAISearch(query, 8);
+      if (data.error) {
+        setAiError(data.error);
+        setAiResults([]);
+      } else {
+        setAiResults(data.results || []);
+        setAiWarnings(data.warnings || []);
+        setAiProvider(data.provider || '');
+      }
+    } catch (err: any) {
+      setAiError(err.message || 'AI search failed');
+      setAiResults([]);
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
+
   const handleSelectTract = useCallback((tract: SuggestionTract) => {
     setAutoAddress(`${tract.approx_lat}, ${tract.approx_lon}`);
     setActiveTab(TabOption.ScoreProperty);
   }, []);
+
+  const handleSelectAIResult = useCallback((tract: AISearchResult) => {
+    const address = `${tract.approx_lat}, ${tract.approx_lon}`;
+    setAutoAddress(address);
+    setActiveTab(TabOption.ScoreProperty);
+    handleScore({
+      address,
+      parcel_type: 'vacant',
+      flood_zone: 'none',
+      brownfield: false,
+      channel_city: false,
+      channel_fannie: false,
+      channel_institution: false,
+      radius_m: 8000,
+    });
+  }, [handleScore]);
 
   const handleMapClick = useCallback((lat: number, lon: number) => {
     setAutoAddress(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
@@ -108,17 +158,35 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bgPrimary pb-12 font-sans selection:bg-green-200">
       <div className="max-w-[1280px] mx-auto pt-6 px-4 sm:px-8">
-        <div className="bg-bgPrimary rounded-none sm:rounded-3xl overflow-hidden">
-          <Header />
+        <div className="bg-bgPrimary rounded-none sm:rounded-3xl overflow-visible">
+          <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
           <main className="mt-8 px-2 sm:px-4">
-            <Controls activeTab={activeTab} onTabChange={setActiveTab} />
+            <Controls
+              heading={
+                activeTab === TabOption.SuggestedAreas
+                  ? 'Top Scoring Areas'
+                  : 'Acquisition Scorer'
+              }
+              showIconToolbar={activeTab === TabOption.ScoreProperty}
+              chartsOpen={chartsOpen}
+              onChartsOpenChange={setChartsOpen}
+            />
 
-            {activeTab === TabOption.ScoreProperty && (
+            {activeTab === TabOption.ScoreProperty && chartsOpen && <DashboardCharts />}
+
+            {activeTab === TabOption.ScoreProperty && !chartsOpen && (
               <>
                 <ScoreInput
                   onScore={handleScore}
+                  onAISearch={handleAISearch}
+                  onSelectAIResult={handleSelectAIResult}
                   loading={loading}
+                  aiLoading={aiLoading}
+                  aiResults={aiResults}
+                  aiWarnings={aiWarnings}
+                  aiProvider={aiProvider}
+                  aiError={aiError}
                   initialAddress={autoAddress}
                 />
 
@@ -131,6 +199,10 @@ export default function App() {
                 {scoreData && (
                   <>
                     <ScoreResult data={scoreData} />
+                    <AIChatPanel
+                      key={`${scoreData.tract_geoid}-${scoreData.composite_score}`}
+                      property={scoreData}
+                    />
                     <FactorBreakdown factors={scoreData.factors} />
                     <FactorTable factors={scoreData.factors} />
                     <AmenityTable summary={scoreData.amenity_summary} />
